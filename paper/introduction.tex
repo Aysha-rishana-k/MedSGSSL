@@ -1,0 +1,18 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Chest radiography remains the most widely performed diagnostic imaging examination worldwide, yet developing reliable automated classifiers for thoracic pathologies is bottlenecked by the cost of expert annotation. While large-scale datasets such as the NIH ChestX-ray14~\cite{wang2017chestxray} provide weak image-level labels extracted from radiology reports, fine-grained annotations remain scarce. Self-supervised learning (SSL) addresses this gap by extracting transferable representations from unlabeled images before supervised fine-tuning~\cite{chen2020simclr, he2020moco}.
+
+Current SSL methods---SimCLR~\cite{chen2020simclr}, BYOL~\cite{grill2020byol}, DINO~\cite{caron2021dino}, MAE~\cite{he2022mae}---treat medical images identically to natural photographs. They assign equal importance to every spatial region, despite the fact that pathological findings in chest X-rays are overwhelmingly localized within the lung fields. This mismatch allows the encoder to learn spurious associations with diaphragm borders, mediastinal structures, or imaging artifacts rather than disease-relevant features.
+
+We propose \textit{Anatomy-Constrained Masked Attention SSL}, a framework that injects rule-based lung segmentation priors---requiring \emph{no} manual annotations---into a Vision Transformer (ViT) pretraining pipeline. Our method jointly optimizes a set of anatomy-aware objectives within a ViT-Small student--teacher architecture:
+
+\begin{enumerate}
+    \item \textbf{Anatomy-guided masked reconstruction} with a progressive difficulty curriculum: lung-region patches are selectively masked and reconstructed from the teacher encoder's output, with the mask ratio increasing linearly over training to provide a smooth difficulty ramp.
+    \item \textbf{Learnable anatomy-aware attention bias}: per-layer parameters $\gamma_l$ modulate self-attention logits so that the transformer preferentially attends to lung-to-lung patch interactions while preserving the capacity to model background context.
+    \item \textbf{Layer-selective attention alignment}: an exponentially weighted loss constrains deeper transformer layers---responsible for semantic abstraction---to align their CLS-token attention with lung regions, while early layers retain freedom to learn local features.
+    \item \textbf{Contrastive alignment}: NT-Xent contrastive learning between projected CLS-token representations of two augmented views ensures view-invariant representations.
+    \item \textbf{Cross-dataset domain alignment}: a centroid-matching loss pulls representations from multiple datasets (NIH and CheXpert~\cite{irvin2019chexpert}) into a shared embedding space, facilitating larger-scale multi-source pretraining.
+\end{enumerate}
+
+We evaluate on 14-disease multi-label classification from the NIH ChestX-ray14 dataset. Compared to both a direct supervised baseline and a conventional SimCLR-based SSL baseline, our approach yields higher mean AUC-ROC, with the largest improvements observed in low-label settings where labeled data is restricted to 1--10\% of the training set. An ablation study confirms that each component contributes to the final performance, and qualitative attention visualizations show that the model learns to focus on the lung fields without explicit supervision during fine-tuning.

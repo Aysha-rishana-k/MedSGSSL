@@ -1,0 +1,59 @@
+\documentclass[conference]{IEEEtran}
+
+% ── Packages ──
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{cite}
+\usepackage{algorithmic}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{subcaption}
+\usepackage{bm}
+
+% ── Custom Commands ──
+\newcommand{\ie}{\textit{i.e.}}
+\newcommand{\eg}{\textit{e.g.}}
+\newcommand{\etal}{\textit{et al.}}
+\newcommand{\Lrecon}{\mathcal{L}_{\mathrm{recon}}}
+\newcommand{\Lattn}{\mathcal{L}_{\mathrm{attn}}}
+\newcommand{\Lctr}{\mathcal{L}_{\mathrm{ctr}}}
+\newcommand{\Ldom}{\mathcal{L}_{\mathrm{dom}}}
+\newcommand{\Ltotal}{\mathcal{L}_{\mathrm{total}}}
+
+\begin{document}
+
+% ── Title ──
+\title{Segmentation-Guided Self-Supervised Learning\\with Anatomy-Aware Attention for Chest X-Ray Classification}
+
+\author{
+\IEEEauthorblockN{Aysha Rishana K}
+\IEEEauthorblockA{Department of Computer Science\\
+Email: rishana@example.edu}
+}
+
+\maketitle
+
+% ── Abstract ──
+\begin{abstract}
+Self-supervised learning (SSL) holds considerable promise for medical image analysis where labeled data remains scarce, yet most SSL methods treat medical radiographs identically to natural images and ignore their structured anatomical content. We propose Anatomy-Constrained Masked Attention SSL, a framework that integrates rule-based lung segmentation priors---requiring no manual annotations---into a Vision Transformer pretraining pipeline. Our method jointly optimizes five complementary objectives on a ViT-Small student--teacher architecture: (i) anatomy-guided masked reconstruction with a progressive difficulty curriculum, (ii) learnable per-layer attention bias parameters that modulate self-attention logits toward lung regions, (iii) layer-selective attention alignment with exponential weighting across transformer depths, (iv) NT-Xent contrastive alignment between augmented views, and (v) cross-dataset domain alignment for multi-source pretraining. Evaluated on the NIH ChestX-ray14 benchmark across 14 thoracic pathologies, our method outperforms both a direct classification baseline and a conventional SimCLR-based SSL baseline, with the largest gains in low-label regimes. Ablation experiments confirm that each component contributes meaningfully, and attention visualizations demonstrate that the learned representations align with clinically relevant anatomy.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Self-supervised learning, chest X-ray, lung segmentation, Vision Transformer, medical image classification
+\end{IEEEkeywords}
+
+% ── Sections ──
+\input{introduction}
+\input{related_work}
+\input{methodology}
+\input{experiments}
+\input{conclusion}
+
+% ── References ──
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
