@@ -1,0 +1,14 @@
+\section{Related Work}
+\label{sec:related_work}
+
+\subsection{Self-Supervised Visual Representation Learning}
+
+Self-supervised methods learn transferable representations by solving pretext tasks on unlabeled data. Contrastive approaches such as SimCLR~\cite{chen2020simclr} and MoCo~\cite{he2020moco} maximize agreement between augmented views via the InfoNCE objective~\cite{oord2018infonce}. Non-contrastive methods, including BYOL~\cite{grill2020byol} and DINO~\cite{caron2021dino}, eliminate negative pairs through momentum-updated target networks and student--teacher distillation. Masked image modeling---exemplified by MAE~\cite{he2022mae} and BEiT~\cite{bao2022beit}---learns by reconstructing randomly masked patches with Vision Transformers. Our core method combines elements from all three paradigms: contrastive alignment between student and teacher CLS tokens, anatomy-guided masked reconstruction, and a momentum teacher for stable training targets.
+
+\subsection{Self-Supervised Learning in Medical Imaging}
+
+Adapting SSL to medical imaging presents domain-specific challenges: limited dataset scale, low inter-class visual variation, and structured anatomical content. Sowrirajan~\textit{et al.}~\cite{sowrirajan2021mococxr} showed that MoCo pretraining on chest X-rays outperforms ImageNet transfer. Azizi~\textit{et al.}~\cite{azizi2021medical} combined SimCLR with multi-instance contrastive learning across patient views. Haghighi~\textit{et al.}~\cite{haghighi2022dira} proposed DiRA, which unifies discriminative, restorative, and adversarial objectives. Zhou~\textit{et al.}~\cite{zhou2023medicalssl} surveyed SSL strategies for 3D medical image analysis. These methods, however, treat medical images as unstructured inputs and ignore spatial anatomical priors.
+
+\subsection{Anatomy-Aware and Segmentation-Guided Learning}
+
+Incorporating anatomical structure into representation learning has been explored in limited settings. Tang~\textit{et al.}~\cite{tang2022selfsupervised} used organ segmentation alongside SSL objectives in CT imaging. Models Genesis~\cite{zhou2021modelgenesis} learned from self-supervised tasks including in-painting within organ regions. In chest radiography, Liu~\textit{et al.}~\cite{liu2021selfsupervised} proposed context restoration that masks lung regions, but relied on a trained segmentation network. Our work differs in two key respects: (i) we use a lightweight, label-free segmentation pipeline (Otsu thresholding with CLAHE preprocessing and morphological refinement) applicable to any chest X-ray dataset without additional model training, and (ii) we inject anatomical information directly into the transformer attention mechanism through learnable modulation parameters rather than only into the pretext task design.

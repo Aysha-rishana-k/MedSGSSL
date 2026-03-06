@@ -1,0 +1,143 @@
+\section{Methodology}
+\label{sec:methodology}
+
+Our framework consists of three stages: (1)~rule-based lung mask generation, (2)~segmentation-guided SSL pretraining, and (3)~supervised fine-tuning for multi-label disease classification. Fig.~\ref{fig:pipeline} illustrates the overall pipeline.
+
+\subsection{Rule-Based Lung Segmentation}
+\label{sec:segmentation}
+
+We generate binary lung masks through a fully automated, label-free pipeline:
+
+\begin{enumerate}
+    \item \textbf{Contrast normalization.}~The input grayscale image $I \in \mathbb{R}^{H \times W}$ is processed with Contrast-Limited Adaptive Histogram Equalization (CLAHE) using a clip limit of 2.0 and an $8 \times 8$ tile grid to normalize local contrast across imaging protocols.
+    \item \textbf{Binarization.}~Otsu's thresholding~\cite{otsu1979threshold} produces an initial binary mask. For images with atypical contrast, an adaptive fallback adjusts the threshold proportionally to the image standard deviation.
+    \item \textbf{Morphological refinement.}~Sequential closing and opening with a $7 \times 7$ elliptical kernel fill small holes and remove spurious regions. Connected component analysis retains the two largest centrally located components (left and right lung).
+    \item \textbf{Boundary smoothing.}~Gaussian blur ($\sigma = 11$~pixels) followed by re-binarization at threshold 0.3 yields smooth mask boundaries.
+    \item \textbf{Patch-level conversion.}~For a ViT with patch size $P$, the pixel mask is converted to a patch-level mask $\bm{m} \in \{0, 1\}^{N}$ where $N = (H/P)^2$. Patch $j$ is labeled as lung ($m_j = 1$) if at least 30\% of its pixels fall within the lung region.
+\end{enumerate}
+
+These masks are precomputed once for the entire dataset and cached to disk, adding negligible overhead to training.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/pipeline.pdf}
+\caption{Overview of the proposed Anatomy-Constrained Masked Attention SSL framework. Rule-based lung masks guide five SSL objectives operating on a ViT-Small student--teacher architecture. The pretrained encoder is subsequently fine-tuned for 14-disease classification.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Anatomy-Constrained Masked Attention SSL}
+\label{sec:proposed_method}
+
+We employ a ViT-Small encoder~\cite{dosovitskiy2021vit} ($D = 384$, $L = 12$ layers, $H = 6$ heads) with $16 \times 16$ patches, producing $N = 196$ patch tokens plus a CLS token. A \emph{momentum teacher}---an exponential moving average copy of the student---provides stable training targets. The encoder is initialized from ImageNet-pretrained weights and frozen (except the patch embedding and learnable anatomy parameters) for the first 5 epochs. The precomputed lung masks are threaded through five complementary objectives described below.
+
+\subsubsection{Anatomy-Guided Masked Reconstruction}
+\label{sec:masked_recon}
+
+Unlike MAE~\cite{he2022mae}, which masks patches uniformly at random, we selectively mask patches identified as lung regions. Given the patch-level lung mask $\bm{m}$, we randomly select a fraction $r(t)$ of lung patches to mask at each epoch. The student encoder processes the full image (with masked tokens zeroed), and a reconstruction head $r_\psi$ predicts the teacher encoder's output at masked positions:
+\begin{equation}
+\Lrecon = \frac{\sum_{j \in \mathcal{M}} \| r_\psi(\bm{h}_j^s) - \bm{h}_j^t \|^2}{|\mathcal{M}|}
+\label{eq:recon}
+\end{equation}
+where $\mathcal{M}$ is the set of masked patch indices, and $\bm{h}_j^s$, $\bm{h}_j^t$ are the student and teacher outputs at position $j$. Using the teacher's representations as reconstruction targets (rather than raw pixels) provides semantically richer supervisory signals.
+
+The mask ratio follows a linear curriculum that progressively increases difficulty:
+\begin{equation}
+r(t) = r_{\min} + (r_{\max} - r_{\min}) \cdot \frac{t}{T}
+\label{eq:curriculum}
+\end{equation}
+with $r_{\min} = 0.3$ and $r_{\max} = 0.75$. Early epochs present easier reconstruction targets, and the model gradually faces harder masking as its representations mature.
+
+\subsubsection{Learnable Anatomy-Aware Attention Bias}
+\label{sec:anatomy_attn}
+
+Standard self-attention computes:
+\begin{equation}
+\text{Attn}(\bm{Q}, \bm{K}, \bm{V}) = \text{softmax}\!\left(\frac{\bm{Q}\bm{K}^\top}{\sqrt{d_k}}\right) \bm{V}
+\end{equation}
+
+We introduce a per-layer learnable parameter $\gamma_l$ that modulates pre-softmax attention logits based on the pairwise anatomical relationship between patches. Let $\bm{m} \in \{0,1\}^{T}$ denote the patch mask padded with 1 for the CLS token. The pairwise modulation matrix is:
+\begin{equation}
+M_{ij} = \gamma_l \cdot m_i \cdot m_j + (1 - \gamma_l)
+\label{eq:modulation}
+\end{equation}
+where $\gamma_l = \sigma(\hat{\gamma}_l)$ is the sigmoid of a learnable logit $\hat{\gamma}_l$, initialized so that $\gamma_l^{(0)} = 0.6$. The modulated attention becomes:
+\begin{equation}
+\text{Attn}_l = \text{softmax}\!\left(\frac{\bm{Q}\bm{K}^\top}{\sqrt{d_k}} + \log M\right) \bm{V}
+\label{eq:modulated_attn}
+\end{equation}
+
+This formulation assigns full attention weight to lung--lung patch pairs, a reduced weight of $(1 - \gamma_l)$ to background--background pairs, and intermediate values to mixed pairs. The CLS token attends freely to all patches. Because $\gamma_l$ is learned independently per layer, each layer adapts its degree of anatomical focus during training.
+
+\subsubsection{Layer-Selective Attention Alignment}
+\label{sec:attn_alignment}
+
+To guide the model's attention toward diagnostically relevant regions, we impose a soft alignment loss on the CLS-to-patch attention distributions. Early transformer layers typically capture local texture features, while deeper layers are responsible for semantic abstraction. We weight the alignment loss across layers using an exponential schedule that emphasizes deeper layers:
+\begin{equation}
+w_l = \frac{\exp(l / \tau_a)}{\sum_{k=0}^{L-1} \exp(k / \tau_a)}
+\label{eq:layer_weights}
+\end{equation}
+where $\tau_a = 2.0$ controls selectivity.
+
+For each layer $l$, the CLS attention over patches $\bm{a}_l \in \mathbb{R}^{N}$ is compared against a soft anatomical prior $\bm{p}$ constructed from the lung mask:
+\begin{equation}
+p_j = \frac{0.9 \cdot m_j + 0.1}{\sum_{k} (0.9 \cdot m_k + 0.1)}
+\label{eq:prior}
+\end{equation}
+
+The prior assigns a weight of 1.0 to lung patches and 0.1 to background patches. The attention alignment loss is the weighted cross-entropy:
+\begin{equation}
+\Lattn = \sum_{l=0}^{L-1} w_l \cdot \left[ -\sum_{j=1}^{N} p_j \log a_{l,j} \right]
+\label{eq:attn_loss}
+\end{equation}
+
+The learnable $\gamma$-bias and this alignment loss form a complementary two-pronged mechanism: $\gamma$ directly modifies the attention computation, while $\Lattn$ provides a supervisory signal that rewards anatomically aligned outputs.
+
+\subsubsection{Contrastive Alignment}
+\label{sec:contrastive}
+
+For each input image $\bm{x}$, two augmented views $\bm{x}_1 = t_1(\bm{x})$ and $\bm{x}_2 = t_2(\bm{x})$ are generated via stochastic augmentations (random resized cropping, horizontal flipping, brightness and contrast jittering). Both views are masked independently and processed by the student encoder. A projection head $g_\phi$ maps the CLS tokens to a lower-dimensional space $\bm{z}_i = g_\phi(\bm{h}^{\text{cls}}_i)$, and the NT-Xent loss~\cite{chen2020simclr} encourages view-invariant representations:
+\begin{equation}
+\Lctr = -\log \frac{\exp(\text{sim}(\bm{z}_1, \bm{z}_2) / \tau)}{\sum_{k=1}^{2B} \mathbb{1}_{[k \neq i]} \exp(\text{sim}(\bm{z}_i, \bm{z}_k) / \tau)}
+\label{eq:ntxent}
+\end{equation}
+where $\text{sim}(\bm{u}, \bm{v}) = \bm{u}^\top \bm{v} / (\|\bm{u}\| \|\bm{v}\|)$ is cosine similarity and $\tau = 0.1$.
+
+\subsubsection{Cross-Dataset Domain Alignment}
+\label{sec:domain_align}
+
+When pretraining on multiple datasets (NIH ChestX-ray14 and CheXpert~\cite{irvin2019chexpert}), distributional shifts between institutions can fragment the learned representation space. To encourage domain-invariant features, we minimize the cosine distance between per-domain CLS-token centroids computed within each mini-batch:
+\begin{equation}
+\Ldom = 1 - \frac{\bar{\bm{c}}_{\text{NIH}}^\top \, \bar{\bm{c}}_{\text{CXP}}}{\|\bar{\bm{c}}_{\text{NIH}}\| \, \|\bar{\bm{c}}_{\text{CXP}}\|}
+\label{eq:domain}
+\end{equation}
+where $\bar{\bm{c}}_d = \frac{1}{|B_d|} \sum_{i \in B_d} \bm{h}_i^{\text{cls}}$ is the mean CLS representation for dataset $d$. This loss is computed only when both datasets are represented in the batch (at least 2 samples each).
+
+\subsection{Total Pretraining Objective}
+\label{sec:total_loss}
+
+The combined SSL loss integrates all five components:
+\begin{equation}
+\Ltotal = \Lrecon + \lambda_{\text{attn}} \Lattn + \lambda_{\text{ctr}} \Lctr + \lambda_{\text{dom}} \Ldom
+\label{eq:total}
+\end{equation}
+with $\lambda_{\text{attn}} = 0.05$, $\lambda_{\text{ctr}} = 1.0$, and $\lambda_{\text{dom}} = 0.1$. In parallel, the learnable $\gamma$ parameters shape the attention distributions at every forward pass.
+
+\subsection{Momentum Teacher}
+\label{sec:momentum}
+
+The teacher encoder parameters $\theta'$ are updated via exponential moving average (EMA) of the student parameters $\theta$:
+\begin{equation}
+\theta' \leftarrow \alpha \, \theta' + (1 - \alpha) \, \theta
+\label{eq:ema}
+\end{equation}
+with momentum $\alpha = 0.996$. The teacher is not updated by gradient descent. This provides stable reconstruction targets and reduces training oscillations.
+
+\subsection{Fine-Tuning}
+\label{sec:finetuning}
+
+After SSL pretraining, the anatomy bias is disabled (masks set to \texttt{None}) and a linear classification head with LayerNorm and dropout ($p = 0.3$) is attached to the CLS token. We fine-tune with focal loss~\cite{lin2017focal} to handle class imbalance:
+\begin{equation}
+\mathcal{L}_{\text{focal}} = -\alpha_f (1 - p_t)^{\gamma_f} \log(p_t)
+\label{eq:focal}
+\end{equation}
+with $\gamma_f = 2.0$ and $\alpha_f = 1.0$. AdamW~\cite{loshchilov2019adamw} with differential learning rates is used: the encoder backbone receives $\frac{1}{10}$ of the classifier learning rate. The encoder is frozen for the first 3 fine-tuning epochs, then jointly optimized with cosine annealing and linear warmup.
